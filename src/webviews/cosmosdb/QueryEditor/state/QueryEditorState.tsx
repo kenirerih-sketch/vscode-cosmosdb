@@ -32,6 +32,10 @@ export type DispatchAction =
           startExecutionTime: number;
       }
     | {
+          type: 'paginationStarted';
+          startExecutionTime: number;
+      }
+    | {
           type: 'executionStopped';
           executionId: string;
           endExecutionTime: number;
@@ -92,6 +96,10 @@ export type DispatchAction =
     | {
           type: 'setAIFeaturesEnabled';
           isAIFeaturesEnabled: boolean;
+      }
+    | {
+          type: 'setConfirmToolInvocationMessage';
+          message: string | null;
       };
 export type QueryEditorState = {
     dbName: string; // Database which is currently selected (Readonly, only server can change it) (Value exists on both client and server)
@@ -126,6 +134,7 @@ export type QueryEditorState = {
 
     showGenerateInput: boolean; // Whether to show the LLM query generation input
     isAIFeaturesEnabled: boolean; // Whether AI features (AI button, etc.) are enabled (Copilot available)
+    confirmToolInvocationMessage: string | null; // Message from server asking user to confirm a tool invocation during LLM generation
 };
 
 export const defaultState: QueryEditorState = {
@@ -161,6 +170,7 @@ export const defaultState: QueryEditorState = {
 
     showGenerateInput: false,
     isAIFeaturesEnabled: false, // Default to false, will be updated from extension when Copilot is available
+    confirmToolInvocationMessage: null,
 };
 
 export function dispatch(state: QueryEditorState, action: DispatchAction): QueryEditorState {
@@ -191,8 +201,15 @@ export function dispatch(state: QueryEditorState, action: DispatchAction): Query
                 startExecutionTime: action.startExecutionTime,
                 isEditMode: isSelectStar(state.querySelectedValue || state.queryValue || ''),
             };
+        case 'paginationStarted':
+            return {
+                ...state,
+                isExecuting: true,
+                startExecutionTime: action.startExecutionTime,
+            };
         case 'executionStopped': {
-            if (action.executionId !== state.currentExecutionId) {
+            // Allow empty executionId to match any current execution (used for error recovery)
+            if (action.executionId !== '' && action.executionId !== state.currentExecutionId) {
                 // TODO: send telemetry. It should not happen
                 return state;
             }
@@ -232,5 +249,7 @@ export function dispatch(state: QueryEditorState, action: DispatchAction): Query
             return { ...state, containerSchema: action.containerSchema };
         case 'setAIFeaturesEnabled':
             return { ...state, isAIFeaturesEnabled: action.isAIFeaturesEnabled };
+        case 'setConfirmToolInvocationMessage':
+            return { ...state, confirmToolInvocationMessage: action.message };
     }
 }

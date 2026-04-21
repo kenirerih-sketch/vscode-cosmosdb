@@ -16,16 +16,17 @@ import {
     ThumbLikeRegular,
 } from '@fluentui/react-icons';
 import * as l10n from '@vscode/l10n';
-import { useCallback, useContext, useEffect, useRef, useState } from 'react';
-import { WebviewContext } from '../../../WebviewContext';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { type QueryEditorAppRouter } from '../../../../panels/trpc/appRouter';
+import { useTrpcClient } from '../../../api/trpc/useTrpcClient';
 import { useQueryEditorState, useQueryEditorStateDispatch } from '../state/QueryEditorContext';
 import { usePromptHistory } from './usePromptHistory';
 
 interface ModelInfo {
     id: string;
     name: string;
-    family: string;
-    vendor: string;
+    family?: string;
+    vendor?: string;
 }
 
 const useStyles = makeStyles({
@@ -210,7 +211,7 @@ const useStyles = makeStyles({
 
 export const GenerateQueryInput = () => {
     const styles = useStyles();
-    const { channel } = useContext(WebviewContext);
+    const { trpcClient } = useTrpcClient<QueryEditorAppRouter>();
     const state = useQueryEditorState();
     const dispatch = useQueryEditorStateDispatch();
     const [input, setInput] = useState('');
@@ -220,7 +221,12 @@ export const GenerateQueryInput = () => {
     const [availableModels, setAvailableModels] = useState<ModelInfo[]>([]);
     const [selectedModelId, setSelectedModelId] = useState<string | null>(null);
     const [feedbackGiven, setFeedbackGiven] = useState<'up' | 'down' | null>(null);
-    const [confirmMessage, setConfirmMessage] = useState<string | null>(null);
+
+    // confirmToolInvocation message is pushed from the extension via the shared event subscription
+    const confirmMessage = state.confirmToolInvocationMessage;
+    const setConfirmMessage = (message: string | null) => {
+        dispatch({ type: 'setConfirmToolInvocationMessage', message });
+    };
 
     // Prompt history for arrow up/down navigation
     const promptHistory = usePromptHistory({ maxSize: 50 });
@@ -263,70 +269,21 @@ export const GenerateQueryInput = () => {
         return Math.max(1, totalLines);
     };
 
-    // Listen for queryGenerated event to stop loading and clear input on success
-    useEffect(() => {
-        // Parameters: generatedQuery (string on success, false on failure), modelName, submittedPrompt
-        const handler = (generatedQuery: string | false, _modelName?: string, submittedPrompt?: string) => {
-            setIsLoading(false);
-            setConfirmMessage(null);
-            // Only clear input and save to history on successful generation
-            if (generatedQuery !== false) {
-                // Add the submitted prompt to history
-                if (submittedPrompt) {
-                    addToHistory(submittedPrompt);
-                }
-                setInput('');
-                setLineCount(1);
-            }
-        };
-        void channel.on('queryGenerated', handler as never);
-        return () => {
-            channel.off('queryGenerated', handler as never);
-        };
-    }, [channel, addToHistory]);
-
-    // Listen for tool invocation confirmation requests from the extension
-    useEffect(() => {
-        const handler = (message: string) => {
-            setConfirmMessage(message);
-        };
-        void channel.on('confirmToolInvocation', handler as never);
-        return () => {
-            channel.off('confirmToolInvocation', handler as never);
-        };
-    }, [channel]);
-
-    // Listen for availableModels event
-    useEffect(() => {
-        const handler = (models: ModelInfo[], savedModelId: string | null) => {
-            setAvailableModels(models);
-            if (savedModelId && models.some((m) => m.id === savedModelId)) {
-                setSelectedModelId(savedModelId);
-            } else if (models.length > 0) {
-                setSelectedModelId(models[0].id);
-            }
-        };
-        void channel.on('availableModels', handler as never);
-        return () => {
-            channel.off('availableModels', handler as never);
-        };
-    }, [channel]);
-
     // Fetch available models when input becomes visible
     useEffect(() => {
         if (state.showGenerateInput) {
-            void channel.postMessage({
-                type: 'event',
-                name: 'command',
-                params: [
-                    {
-                        commandName: 'getAvailableModels',
-                        params: [],
-                    },
-                ],
+            void trpcClient.queryEditor.getAvailableModels.query().then((result) => {
+                if (result) {
+                    setAvailableModels(result.models);
+                    if (result.savedModelId && result.models.some((m) => m.id === result.savedModelId)) {
+                        setSelectedModelId(result.savedModelId);
+                    } else if (result.models.length > 0) {
+                        setSelectedModelId(result.models[0].id);
+                    }
+                }
             });
         }
-    }, [state.showGenerateInput, channel]);
+    }, [state.showGenerateInput, trpcClient]);
 
     // Focus the textarea when the input becomes visible
     useEffect(() => {
@@ -341,18 +298,9 @@ export const GenerateQueryInput = () => {
             const modelId = data.optionValue as string;
             setSelectedModelId(modelId);
             // Persist the selection
-            void channel.postMessage({
-                type: 'event',
-                name: 'command',
-                params: [
-                    {
-                        commandName: 'setSelectedModel',
-                        params: [modelId],
-                    },
-                ],
-            });
+            void trpcClient.queryEditor.setSelectedModel.mutate({ modelId });
         },
-        [channel],
+        [trpcClient],
     );
 
     if (!state.showGenerateInput) {
@@ -367,16 +315,7 @@ export const GenerateQueryInput = () => {
         setFeedbackGiven(null);
         setInput('');
         setLineCount(1);
-        void channel.postMessage({
-            type: 'event',
-            name: 'command',
-            params: [
-                {
-                    commandName: 'closeGenerateInput',
-                    params: [],
-                },
-            ],
-        });
+        void trpcClient.queryEditor.closeGenerateInput.mutate();
         dispatch({ type: 'toggleGenerateInput' });
     };
 
@@ -389,67 +328,51 @@ export const GenerateQueryInput = () => {
         try {
             // Get the current query content from the state
             const currentQuery = state.queryValue;
+            const submittedPrompt = input;
 
-            // Send command to extension
-            await channel.postMessage({
-                type: 'event',
-                name: 'command',
-                params: [
-                    {
-                        commandName: 'generateQuery',
-                        params: [input, currentQuery],
-                    },
-                ],
+            // Send command to extension via tRPC and get result back
+            const result = await trpcClient.queryEditor.generateQuery.mutate({
+                prompt: submittedPrompt,
+                currentQuery,
             });
 
-            // Input will be cleared by queryGenerated handler on success
+            setIsLoading(false);
+            setConfirmMessage(null);
+
+            if (result && typeof result.generatedQuery === 'string') {
+                // Insert generated query into the editor
+                dispatch({ type: 'insertText', queryValue: result.generatedQuery });
+                void trpcClient.queryEditor.updateQueryText.mutate({ query: result.generatedQuery });
+
+                // Save prompt to history and clear input
+                addToHistory(submittedPrompt);
+                setInput('');
+                setLineCount(1);
+            }
         } catch (error) {
             console.error('Failed to generate query:', error);
             setIsLoading(false);
+            setConfirmMessage(null);
         }
     };
 
     const handleCancel = () => {
-        // Send cancel command to extension
-        void channel.postMessage({
-            type: 'event',
-            name: 'command',
-            params: [
-                {
-                    commandName: 'cancelGenerateQuery',
-                    params: [],
-                },
-            ],
-        });
+        // Send cancel command to extension via tRPC
+        void trpcClient.queryEditor.cancelGenerateQuery.mutate();
         setConfirmMessage(null);
         setIsLoading(false);
     };
 
     const handleConfirmResponse = (confirmed: boolean) => {
         setConfirmMessage(null);
-        void channel.postMessage({
-            type: 'event',
-            name: 'command',
-            params: [
-                {
-                    commandName: 'confirmToolInvocationResponse',
-                    params: [confirmed],
-                },
-            ],
-        });
+        void trpcClient.queryEditor.confirmToolInvocationResponse.mutate({ confirmed });
     };
 
     const handleFeedback = (direction: 'up' | 'down') => {
         setFeedbackGiven(direction);
-        void channel.postMessage({
-            type: 'event',
-            name: 'command',
-            params: [
-                {
-                    commandName: 'reportFeedback',
-                    params: [{ component: 'generateQueryInput', feedbackValue: direction }],
-                },
-            ],
+        void trpcClient.queryEditor.reportFeedback.mutate({
+            feedbackValue: direction,
+            component: 'generateQueryInput',
         });
     };
 

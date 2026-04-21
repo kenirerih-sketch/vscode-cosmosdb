@@ -1,22 +1,30 @@
 {
   "compilerOptions": {
-    "module": "esnext",
-    "moduleResolution": "bundler",
-    "target": "ES2023",
+    // Module settings
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "target": "ES2024",
     "outDir": "out",
-    "lib": ["ES2023", "dom", "dom.iterable", "webworker"],
-    "sourceMap": true,
-    "esModuleInterop": true,
-    "noImplicitThis": true,
+    "lib": ["ES2024", "dom", "dom.iterable", "webworker"],
+
+    // TS 7.0 defaults (can be removed entirely, shown for clarity)
+    "strict": true, // ON by default in TS 7.0
+    "esModuleInterop": true, // ON by default in TS 7.0
+    "skipLibCheck": true, // ON by default in TS 7.0
+
+    // Additional strictness (not part of TS 7.0 defaults)
     "noImplicitReturns": true,
     "noUnusedLocals": true,
-    "strictNullChecks": true,
-    "skipLibCheck": true,
     "noUnusedParameters": true,
+
+    // Other options
+    "sourceMap": true,
     "rootDir": ".",
-    "experimentalDecorators": true,
     "resolveJsonModule": true,
     "alwaysStrict": true,
+    "paths": {
+      "*": ["./*"]
+    },
     "jsx": "react-jsx",
     "types": ["jest", "mocha", "node"],
     "typeRoots": ["node_modules/@types"]

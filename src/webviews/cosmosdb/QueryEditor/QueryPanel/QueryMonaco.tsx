@@ -4,7 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { useMonaco } from '@monaco-editor/react';
-import { useEffect, useMemo, useRef } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import { MonacoEditor, type MonacoEditorType } from '../../../MonacoEditor';
 import { useQueryEditorDispatcher, useQueryEditorState } from '../state/QueryEditorContext';
 import { registerNoSqlCompletionProvider } from './nosqlCompletionProvider';
@@ -49,7 +49,7 @@ export const QueryMonaco = () => {
 
     const onMount = (editor: MonacoEditorType.editor.IStandaloneCodeEditor) => {
         // Update initial editor value as monaco editor doesn't update the value after it's mounted. We need to set it manually here.
-        dispatcher.insertText(editor.getValue());
+        void dispatcher.insertText(editor.getValue());
 
         // Set up cursor selection event listener
         disposableRef.current = editor.onDidChangeCursorSelection((event) => {
@@ -80,10 +80,10 @@ export const QueryMonaco = () => {
         };
     }, []);
 
-    const onChange = useMemo(
-        () => (newValue: string) => {
-            if (newValue !== state.queryValue) {
-                dispatcher.insertText(newValue);
+    const onChange = useCallback(
+        (newValue: string | undefined) => {
+            if (newValue !== undefined && newValue !== state.queryValue) {
+                void dispatcher.insertText(newValue);
             }
         },
         [dispatcher, state],
